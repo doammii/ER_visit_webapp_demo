@@ -1,0 +1,8 @@
+.streamlit/
+*.pyc
+
+venv/
+env/
+.venv/
+.env
+.env.local
