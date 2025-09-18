@@ -185,10 +185,9 @@ def _is_closed_question(q: str) -> bool:
     return any(tok in q for tok in ["인가요", "있나요", "하셨나요", "합니까", "되나요", "않나요"])
 
 def _choose_followup(ents: Dict[str, str], context_topics: List[str]) -> Tuple[str, List[str]]:
-    """규칙 기반: 공감 없이 '질문 1개'만 반환 (중복 방지 강화)"""   
-    _ensure_flags()   
+    _ensure_flags()
     slots = st.session_state.slots
-    af = st.session_state.asked_flags   
+    af = st.session_state.asked_flags
 
     region, duration, severity, ms, assoc = (
         ents["region"], ents["duration"], ents["severity"], ents["main_symptom"], ents["assoc"]
@@ -196,8 +195,9 @@ def _choose_followup(ents: Dict[str, str], context_topics: List[str]) -> Tuple[s
 
     chest_ctx = (ms == "통증" and (region == "가슴" or "가슴" in context_topics)) or \
                 (("가슴" in context_topics) and ("통증" in context_topics))
+    resp_ctx  = (ms == "호흡곤란/호흡불편") or ("호흡" in context_topics)              
+    gi_ctx    = (ms == "위장관 증상") or ("복부" in context_topics)                   
 
-    # 1) 흉통 컨텍스트
     if chest_ctx:
         if not slots.get("chest_pain_duration") and not af["duration"]:
             q = "통증은 언제부터 시작되었나요? 대략 몇 분/시간 정도 지속되었는지 알려주세요."
@@ -209,39 +209,35 @@ def _choose_followup(ents: Dict[str, str], context_topics: List[str]) -> Tuple[s
             q = "안정 시에도 숨이 차신가요?"
             return q, ["네. 안정 시에도 숨이 찹니다.", "아니요. 활동 시에만 숨이 찹니다."]
 
-    # 2) 호흡 컨텍스트
-    if ms == "호흡곤란/호흡불편" or "호흡" in context_topics:
+    if resp_ctx:
         if slots.get("sob_at_rest") is None and not af["sob_rest"]:
             q = "안정 시에도 숨이 차신가요?"
             return q, ["네. 안정 시에도 숨이 찹니다.", "아니요. 활동 시에만 숨이 찹니다."]
 
-    # 3) GI 컨텍스트
-    if ms == "위장관 증상" or "복부" in context_topics:
+    if gi_ctx:
         if slots.get("gi_combo") is None and not af["gi_combo"]:
             q = "구토나 설사가 동반되나요?"
             return q, ["네. 있습니다.", "아니요. 없습니다."]
 
-    # 4) 동반증상
     if "식은땀" in assoc and not af["sweat"]:
         q = "식은땀이 지금도 계속 나시나요?"
         return q, ["네. 계속 납니다.", "아니요. 지금은 없습니다."]
 
-    # 5) 핵심 슬롯이 모두 채워지면 종료
-    all_filled = (
-        slots.get("sob_at_rest") is not None
-        and slots.get("gi_combo") is not None
-        and slots.get("pain_worse_with_move") is not None
-        and bool(slots.get("chest_pain_duration"))
-    )
-    if all_filled:
+    # ----- 컨텍스트별 '충분 조건'을 만족하면 종료 -----       
+    chest_done = chest_ctx and bool(slots.get("chest_pain_duration")) \
+                 and (slots.get("pain_worse_with_move") is not None) \
+                 and (slots.get("sob_at_rest") is not None)
+    resp_done  = resp_ctx and (slots.get("sob_at_rest") is not None)
+    gi_done    = gi_ctx and (slots.get("gi_combo") is not None)
+
+    if chest_done or resp_done or gi_done:                               
         st.session_state.ready_to_diagnose = True
         return "진단을 진행하겠습니다.", []
 
-    # 6) 구체화 질문은 1회만
     if not af["clarify"]:
         q = "지금 불편하신 부위와 증상을 한 번 더 구체적으로 말씀해주시겠어요? (예: '가슴 중앙이 조이고 30분째 심함')"
         return q, []
-    # 이미 구체화 질문을 했으면 남은 슬롯 중 하나로 진행
+
     if slots.get("pain_worse_with_move") is None and not af["worse_move"]:
         q = "통증이 움직이거나 숨쉴 때 더 심해지나요?"
         return q, ["네. 더 심해집니다.", "아니요. 비슷합니다."]
@@ -252,8 +248,9 @@ def _choose_followup(ents: Dict[str, str], context_topics: List[str]) -> Tuple[s
         q = "구토나 설사가 동반되나요?"
         return q, ["네. 있습니다.", "아니요. 없습니다."]
 
-    # 마지막 안전출구
+    st.session_state.ready_to_diagnose = True                             # modification
     return "진단을 진행하겠습니다.", []
+
 
 # 대화 요약(진단용)
 def _generate_summary_from_conversation(messages: List[dict]) -> str:
@@ -370,6 +367,9 @@ def simulate_model_response(prompt: str) -> None:
         else:
             st.session_state.last_assistant_question = None
             st.session_state.yesno_options = None
+            
+        if "진단을 진행하겠습니다" in followup:                       
+            st.session_state.ready_to_diagnose = True
 
     # 조기 종료 플래그(가슴+통증+숨+식은땀)
     convo_text = " ".join([m["content"] for m in st.session_state.chat_messages[-8:]])

@@ -108,16 +108,15 @@ def display() -> None:
 
     # --- 자동/수동 진단 ---
     pair_count = st.session_state.get("qa_pairs", 0)
-    should_autorun = st.session_state.get("ready_to_diagnose", False) or pair_count >= 10
+    should_autorun = st.session_state.get("ready_to_diagnose", False) or pair_count >= 9
 
     if should_autorun:
-        # 배너 중복 방지
         if not st.session_state.get("_diag_banner", False):
             st.session_state.chat_messages.append({"role": "assistant", "content": "진단을 진행하겠습니다."})
             st.session_state._diag_banner = True
         run_diagnosis()
         next_step()
-        st.rerun()  
+        st.rerun() 
 
     if pair_count >= 10 and not should_autorun:
         if st.button("진단 결과 확인", type="primary", use_container_width=True):
